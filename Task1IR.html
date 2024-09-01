@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heart Attack Prediction Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.0/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.0.0/dist/tf.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        #uploadSection {
+            margin-bottom: 20px;
+        }
+        #charts {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+        .chart-container {
+            width: 48%;
+            margin-bottom: 20px;
+        }
+        #predictionSection {
+            margin-top: 20px;
+        }
+        input, button {
+            margin: 5px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Heart Attack Prediction Dashboard</h1>
+        <div id="uploadSection">
+            <input type="file" id="csvFile" accept=".csv">
+            <button onclick="processCSV()">Process CSV</button>
+        </div>
+        <div id="charts"></div>
+        <div id="predictionSection">
+            <h2>Predict Heart Attack Risk</h2>
+            <input type="number" id="age" placeholder="Age">
+            <select id="gender">
+                <option value="1">Male</option>
+                <option value="0">Female</option>
+            </select>
+            <input type="number" id="cholesterol" placeholder="Cholesterol">
+            <input type="number" id="heartRate" placeholder="Max Heart Rate">
+            <button onclick="predict()">Predict</button>
+            <p id="predictionResult"></p>
+        </div>
+    </div>
+
+    <script>
+        let data = [];
+        let model;
+
+        async function processCSV() {
+            const fileInput = document.getElementById('csvFile');
+            const file = fileInput.files[0];
+            Papa.parse(file, {
+                header: true,
+                dynamicTyping: true,
+                complete: function(results) {
+                    data = results.data;
+                    visualizeData();
+                    trainModel();
+                }
+            });
+        }
+
+        function visualizeData() {
+            document.getElementById('charts').innerHTML = '';
+            
+            createChart('ageDistribution', 'bar', 'Age Distribution', calculateAgeDistribution());
+            createChart('genderDistribution', 'pie', 'Gender Distribution', calculateGenderDistribution());
+            createChart('cholesterolVsRisk', 'scatter', 'Cholesterol vs Heart Attack Risk', calculateCholesterolVsRisk());
+            createChart('heartRateVsRisk', 'scatter', 'Max Heart Rate vs Heart Attack Risk', calculateHeartRateVsRisk());
+        }
+
+        function createChart(id, type, title, chartData) {
+            const container = document.createElement('div');
+            container.className = 'chart-container';
+            container.innerHTML = `<canvas id="${id}"></canvas>`;
+            document.getElementById('charts').appendChild(container);
+
+            new Chart(document.getElementById(id), {
+                type: type,
+                data: chartData,
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: title
+                        }
+                    }
+                }
+            });
+        }
+
+        function calculateAgeDistribution() {
+            const ageGroups = {'<30': 0, '30-40': 0, '41-50': 0, '51-60': 0, '60+': 0};
+            data.forEach(entry => {
+                if (entry.Age < 30) ageGroups['<30']++;
+                else if (entry.Age < 41) ageGroups['30-40']++;
+                else if (entry.Age < 51) ageGroups['41-50']++;
+                else if (entry.Age < 61) ageGroups['51-60']++;
+                else ageGroups['60+']++;
+            });
+            return {
+                labels: Object.keys(ageGroups),
+                datasets: [{
+                    data: Object.values(ageGroups),
+                    backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF']
+                }]
+            };
+        }
+
+        function calculateGenderDistribution() {
+            const genderCount = {Male: 0, Female: 0};
+            data.forEach(entry => {
+                entry.Gender === 'Male' ? genderCount.Male++ : genderCount.Female++;
+            });
+            return {
+                labels: Object.keys(genderCount),
+                datasets: [{
+                    data: Object.values(genderCount),
+                    backgroundColor: ['#36A2EB', '#FF6384']
+                }]
+            };
+        }
+
+        function calculateCholesterolVsRisk() {
+            const chartData = data.map(entry => ({
+                x: entry.Cholesterol,
+                y: entry.Heart_Attack
+            }));
+            return {
+                datasets: [{
+                    label: 'Cholesterol vs Heart Attack Risk',
+                    data: chartData,
+                    backgroundColor: 'rgba(255, 99, 132, 0.5)'
+                }]
+            };
+        }
+
+        function calculateHeartRateVsRisk() {
+            const chartData = data.map(entry => ({
+                x: entry.Max_Heart_Rate,
+                y: entry.Heart_Attack
+            }));
+            return {
+                datasets: [{
+                    label: 'Max Heart Rate vs Heart Attack Risk',
+                    data: chartData,
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)'
+                }]
+            };
+        }
+
+        async function trainModel() {
+            const trainingData = data.map(entry => [
+                entry.Age,
+                entry.Gender === 'Male' ? 1 : 0,
+                entry.Cholesterol,
+                entry.Max_Heart_Rate
+            ]);
+            const trainingLabels = data.map(entry => entry.Heart_Attack);
+
+            const xs = tf.tensor2d(trainingData);
+            const ys = tf.tensor2d(trainingLabels, [trainingLabels.length, 1]);
+
+            model = tf.sequential();
+            model.add(tf.layers.dense({units: 10, activation: 'relu', inputShape: [4]}));
+            model.add(tf.layers.dense({units: 1, activation: 'sigmoid'}));
+            model.compile({optimizer: 'adam', loss: 'binaryCrossentropy', metrics: ['accuracy']});
+
+            await model.fit(xs, ys, {epochs: 50, batchSize: 32});
+
+            console.log('Model trained');
+        }
+
+        async function predict() {
+            const age = parseInt(document.getElementById('age').value);
+            const gender = parseInt(document.getElementById('gender').value);
+            const cholesterol = parseInt(document.getElementById('cholesterol').value);
+            const heartRate = parseInt(document.getElementById('heartRate').value);
+
+            const input = tf.tensor2d([[age, gender, cholesterol, heartRate]]);
+            const prediction = await model.predict(input).data();
+            const risk = prediction[0];
+
+            document.getElementById('predictionResult').innerText = `Heart Attack Risk: ${(risk * 100).toFixed(2)}%`;
+        }
+    </script>
+</body>
+</html>
